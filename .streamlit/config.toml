@@ -1,0 +1,11 @@
+# Tema "adega": o Streamlit usa estas cores nos componentes nativos
+# (controle deslizante, barra de progresso, foco dos campos, seleção).
+[theme]
+base = "dark"
+primaryColor = "#C8385A"
+backgroundColor = "#120A0D"
+secondaryBackgroundColor = "#1C1015"
+textColor = "#F5EBDD"
+
+[browser]
+gatherUsageStats = false
