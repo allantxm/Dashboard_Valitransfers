@@ -599,7 +599,6 @@ def mascarar_nome(nome) -> str:
 def destaques(df: pd.DataFrame, df_todas_situacoes: Optional[pd.DataFrame] = None) -> list[str]:
     if df.empty:
         return []
-    ind = indicadores(df)
     frases: list[str] = []
 
     diaria = serie_diaria(df)
@@ -635,12 +634,6 @@ def destaques(df: pd.DataFrame, df_todas_situacoes: Optional[pd.DataFrame] = Non
     if df_todas_situacoes is not None and not df_todas_situacoes.empty:
         t = taxa_cancelamento(df_todas_situacoes)
         frases.append(f"Cancelamentos e devoluções no recorte: {pct(t)} dos pedidos.")
-
-    if not np.isnan(ind["pct_frete_gratis"]):
-        frases.append(f"{pct(ind['pct_frete_gratis'])} dos pedidos com frete informado têm frete zero.")
-    if ind["nfe_pendentes"]:
-        n = ind["nfe_pendentes"]
-        frases.append(f"{inteiro(n)} {'pedido está' if n == 1 else 'pedidos estão'} com a nota fiscal pendente.")
     return frases
 
 

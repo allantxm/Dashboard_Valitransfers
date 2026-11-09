@@ -1,12 +1,14 @@
 """Vali Transfers | Dashboard analítico para e-commerce de vinhos (Streamlit).
 
-Nenhuma informação aparece antes do upload: a tela inicial só pede o arquivo CSV.
-O arquivo é lido em memória (bytes) e NUNCA é gravado ou alterado.
+A base padrão (base_dados_Valitransfers_Ltda.csv, na mesma pasta deste arquivo) é carregada
+automaticamente. Pela barra lateral dá para analisar outro CSV; se a base padrão não existir,
+a tela inicial pede o upload. Os arquivos são lidos em memória e NUNCA são gravados ou alterados.
 A lógica de cálculo fica em dados.py; este arquivo cuida apenas da apresentação.
 
 Para rodar:  streamlit run dashboard_valitransfers.py
 """
 import html
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
@@ -16,6 +18,7 @@ import streamlit as st
 import dados
 from dados import brl, inteiro, pct
 
+ARQUIVO_PADRAO = Path(__file__).resolve().parent / "base_dados_Valitransfers_Ltda.csv"
 NOME_EMPRESA = "Vali Transfers"
 SUBTITULO = "Inteligência comercial: vendas, rótulos, canais e rentabilidade"
 
@@ -298,6 +301,13 @@ def _versao():
 _LARGURA = {"width": "stretch"} if _versao() >= (1, 50) else {"use_container_width": True}
 
 
+@st.cache_data(show_spinner="Lendo e preparando a base...")
+def carregar_base_padrao(caminho: str, modificado_em: float):
+    """Lê e prepara a base padrão uma única vez (cache). `modificado_em` invalida o cache
+    automaticamente quando o CSV for atualizado no repositório."""
+    return dados.carregar(Path(caminho).read_bytes())
+
+
 # ---------- Componentes visuais ----------
 def _h(texto) -> str:
     """Escapa texto para HTML. O '$' vira entidade para o Markdown nunca confundi-lo com fórmula."""
@@ -431,8 +441,8 @@ def tela_inicial():
         f"<div class='vt-landing'>{marca()}"
         f"<div class='vt-landing-title'>{_h(NOME_EMPRESA)}</div>"
         f"<div class='vt-landing-sub'>{_h(SUBTITULO)}</div>"
-        "<p class='vt-landing-note'>Envie o arquivo CSV de vendas para liberar o painel. "
-        "Enquanto não houver upload, nenhum dado é exibido. O arquivo é lido apenas em memória "
+        "<p class='vt-landing-note'>A base padrão não foi encontrada. Envie o arquivo CSV de vendas para liberar o painel. "
+        "O arquivo é lido apenas em memória "
         "durante a sessão: não é gravado em disco nem alterado.</p></div>",
         unsafe_allow_html=True,
     )
@@ -475,7 +485,15 @@ def tela_inicial():
 
 
 if "vt_df" not in st.session_state:
-    tela_inicial()
+    if ARQUIVO_PADRAO.exists():
+        try:
+            st.session_state["vt_df"] = carregar_base_padrao(str(ARQUIVO_PADRAO), ARQUIVO_PADRAO.stat().st_mtime)
+            st.session_state["vt_origem"] = ARQUIVO_PADRAO.name
+        except Exception as erro:  # noqa: BLE001
+            st.error(f"Não foi possível carregar a base padrão ({ARQUIVO_PADRAO.name}). {erro}")
+            tela_inicial()
+    else:
+        tela_inicial()
 
 df = st.session_state["vt_df"]
 origem = st.session_state["vt_origem"]
@@ -490,9 +508,31 @@ st.sidebar.markdown(
     f"<div class='vt-side-box'>Arquivo: <b>{_h(origem)}</b><br>{_h(inteiro(len(df)))} linhas na base</div>",
     unsafe_allow_html=True,
 )
-if st.sidebar.button("Trocar arquivo / limpar painel", **_LARGURA):
-    st.session_state.clear()
-    st.rerun()
+with st.sidebar.expander("Usar outro arquivo CSV"):
+    novo = st.file_uploader(
+        "CSV de vendas", type=["csv"], label_visibility="collapsed",
+        key=f"vt_upload_lateral_{st.session_state.get('vt_up_n', 0)}",
+        help="Substitui temporariamente a base padrão nesta sessão. O arquivo não é gravado.",
+    )
+    if novo is not None and st.session_state.get("vt_origem") != novo.name:
+        try:
+            with st.spinner("Lendo e preparando a base..."):
+                nova_base = dados.carregar(novo.getvalue())
+        except Exception as erro:  # noqa: BLE001
+            st.error(f"Não foi possível carregar a base. {erro}")
+        else:
+            if nova_base.empty:
+                st.warning("O arquivo não tem nenhuma linha com data válida (formato dd/mm/aaaa).")
+            else:
+                st.session_state["vt_df"] = nova_base
+                st.session_state["vt_origem"] = novo.name
+                st.rerun()
+if origem != ARQUIVO_PADRAO.name and ARQUIVO_PADRAO.exists():
+    if st.sidebar.button("Voltar à base padrão", **_LARGURA):
+        st.session_state.pop("vt_df", None)
+        st.session_state.pop("vt_origem", None)
+        st.session_state["vt_up_n"] = st.session_state.get("vt_up_n", 0) + 1  # zera o campo de upload
+        st.rerun()
 
 st.sidebar.divider()
 st.sidebar.subheader("Filtros")
@@ -597,7 +637,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-margem_ok = pd.notna(ind["margem_pct"])
 st.markdown(
     faixa_kpis([
         ("Itens vendidos", inteiro(ind["itens"]), "", ""),
@@ -606,22 +645,12 @@ st.markdown(
          "Pedidos cancelados ou devolvidos ÷ pedidos totais, nos demais filtros.", ""),
         ("Frete (por pedido)", brl(ind["frete_total"]),
          "Frete é do pedido: conta uma vez por pedido, não por item.", ""),
-        ("Frete zero", pct(ind["pct_frete_gratis"]),
-         "Parte dos pedidos com frete informado cujo frete é zero.", ""),
-        ("Descontos (por pedido)", brl(ind["desconto_total"]),
-         "Desconto do pedido, contado uma vez por pedido. Valores negativos na base funcionam como acréscimo.", ""),
-        ("Margem bruta est.", f"{brl(ind['margem_bruta'])} · {pct(ind['margem_pct'], 0)}" if margem_ok else "—",
-         "Preço Total − (Preço de Custo × Quantidade), só nas linhas com custo informado.", ""),
-        ("NF-e pendentes", inteiro(ind["nfe_pendentes"]),
-         "Pedidos com nota fiscal em situação 'Pendente'.", "warn" if ind["nfe_pendentes"] else ""),
     ]),
     unsafe_allow_html=True,
 )
 st.markdown(
     "<p class='vt-note'>Faturamento líquido = Preço Total − descontos do pedido (rateados entre os itens). "
-    "Margem e custo são estimativas (Preço de Custo × Quantidade) e cobrem "
-    f"{_h(pct(ind['cobertura_custo'], 0))} da receita, as linhas com custo informado; "
-    "não incluem taxas de marketplace, impostos ou despesas.</p>",
+    "O frete não entra no faturamento.</p>",
     unsafe_allow_html=True,
 )
 
